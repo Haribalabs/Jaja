@@ -243,3 +243,52 @@ def ensure_schema() -> None:
             kind TEXT NOT NULL,
             risk_grade TEXT NOT NULL,
             target_weight REAL NOT NULL,
+            max_debt REAL NOT NULL,
+            enabled INTEGER NOT NULL DEFAULT 1,
+            created_at INTEGER NOT NULL,
+            params_json TEXT NOT NULL,
+            FOREIGN KEY(vault_id) REFERENCES vaults(id) ON DELETE CASCADE
+        );
+        """,
+        """
+        CREATE TABLE IF NOT EXISTS prices (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            symbol TEXT NOT NULL,
+            ts INTEGER NOT NULL,
+            px REAL NOT NULL,
+            source TEXT NOT NULL,
+            UNIQUE(symbol, ts)
+        );
+        """,
+        """
+        CREATE TABLE IF NOT EXISTS signals (
+            id TEXT PRIMARY KEY,
+            vault_id TEXT NOT NULL,
+            ts INTEGER NOT NULL,
+            horizon TEXT NOT NULL,
+            score REAL NOT NULL,
+            rationale TEXT NOT NULL,
+            payload_json TEXT NOT NULL,
+            FOREIGN KEY(vault_id) REFERENCES vaults(id) ON DELETE CASCADE
+        );
+        """,
+        """
+        CREATE TABLE IF NOT EXISTS portfolios (
+            id TEXT PRIMARY KEY,
+            user_id TEXT NOT NULL,
+            label TEXT NOT NULL,
+            base_currency TEXT NOT NULL,
+            created_at INTEGER NOT NULL,
+            FOREIGN KEY(user_id) REFERENCES users(id) ON DELETE CASCADE
+        );
+        """,
+        """
+        CREATE TABLE IF NOT EXISTS portfolio_positions (
+            id TEXT PRIMARY KEY,
+            portfolio_id TEXT NOT NULL,
+            symbol TEXT NOT NULL,
+            qty REAL NOT NULL,
+            cost_basis REAL NOT NULL,
+            updated_at INTEGER NOT NULL,
+            UNIQUE(portfolio_id, symbol),
+            FOREIGN KEY(portfolio_id) REFERENCES portfolios(id) ON DELETE CASCADE
