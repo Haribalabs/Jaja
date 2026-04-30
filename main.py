@@ -341,3 +341,52 @@ def verify_password(password: str, stored: str) -> bool:
             return False
         rounds = int(rounds_s)
         check = pbkdf2_hash(password, salt, rounds=rounds)
+        return hmac.compare_digest(check, stored)
+    except Exception:
+        return False
+
+
+def audit(action: str, actor_user_id: str | None, details: dict[str, t.Any]) -> None:
+    with db() as conn:
+        conn.execute(
+            "INSERT INTO audit_log(id, ts, actor_user_id, action, details_json, ip, user_agent) VALUES(?,?,?,?,?,?,?)",
+            (
+                str(uuid.uuid4()),
+                utc_ts(),
+                actor_user_id,
+                action,
+                json_dumps(details),
+                request.remote_addr,
+                request.headers.get("User-Agent"),
+            ),
+        )
+
+
+def require_local_write() -> None:
+    if request.method in ("POST", "PUT", "PATCH", "DELETE") and not is_local_request():
+        abort(make_response(jsonify({"ok": False, "error": "remote_write_disabled"}), 403))
+
+
+@app.before_request
+def _guard_writes():
+    require_local_write()
+
+
+def get_cookie(name: str) -> str | None:
+    return request.cookies.get(name)
+
+
+def set_cookie(resp: Response, name: str, value: str, ttl: int) -> None:
+    expires = _dt.datetime.utcfromtimestamp(utc_ts() + ttl)
+    resp.set_cookie(
+        name,
+        value,
+        expires=expires,
+        httponly=True,
+        secure=False if CONFIG.debug else False,
+        samesite="Lax",
+        path="/",
+    )
+
+
+def clear_cookie(resp: Response, name: str) -> None:
