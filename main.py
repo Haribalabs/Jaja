@@ -635,3 +635,52 @@ class DeterministicMarket:
         self.seed_tag = seed_tag
 
     def _seed(self, symbol: str) -> int:
+        h = stable_hash("market", self.seed_tag, symbol)
+        return int(h[:16], 16)
+
+    def px_at(self, symbol: str, ts: int) -> float:
+        base = 1.0
+        if symbol.upper() in ("USDC", "USDT", "DAI"):
+            base = 1.0
+        elif symbol.upper() in ("ETH", "WETH"):
+            base = 3200.0
+        elif symbol.upper() in ("BTC", "WBTC"):
+            base = 68000.0
+        else:
+            base = 12.0 + (self._seed(symbol) % 3000) / 100.0
+
+        s = self._seed(symbol)
+        # Multi-frequency waves + gentle drift; deterministic from seed and time.
+        t0 = ts / 3600.0
+        w1 = (s % 997) / 997.0
+        w2 = ((s >> 10) % 991) / 991.0
+        w3 = ((s >> 20) % 983) / 983.0
+        # Use bounded oscillation and trend.
+        osc = (
+            0.020 * _sin(0.19 * t0 + 6.1 * w1)
+            + 0.013 * _sin(0.053 * t0 + 11.2 * w2)
+            + 0.009 * _sin(0.011 * t0 + 19.7 * w3)
+        )
+        drift = 0.000004 * (t0 - 1000.0) * (0.6 + 0.4 * (w1))
+        shock = 0.0
+        if symbol.upper() not in ("USDC", "USDT", "DAI"):
+            shock = 0.006 * _sin(0.67 * t0 + 3.2 * w2) * _sin(0.041 * t0 + 8.8 * w3)
+        px = base * (1.0 + osc + drift + shock)
+        if symbol.upper() in ("USDC", "USDT", "DAI"):
+            px = clamp(px, 0.992, 1.008)
+        else:
+            px = max(0.05, px)
+        return float(px)
+
+
+def _sin(x: float) -> float:
+    # Quick sine approximation (enough for deterministic visuals).
+    # Range reduction:
+    pi = 3.141592653589793
+    x = x % (2 * pi)
+    if x > pi:
+        x -= 2 * pi
+    # 7th order taylor-like approx
+    x2 = x * x
+    return x * (1 - x2 / 6 + x2 * x2 / 120 - x2 * x2 * x2 / 5040)
+
