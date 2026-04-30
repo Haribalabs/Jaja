@@ -488,3 +488,52 @@ def auth_context() -> dict[str, t.Any] | None:
             "email": u["email"],
             "is_admin": bool(u["is_admin"]),
         }
+
+
+def require_auth() -> dict[str, t.Any]:
+    ctx = auth_context()
+    if not ctx:
+        abort(make_response(jsonify({"ok": False, "error": "auth"}), 401))
+    return ctx
+
+
+def require_admin() -> dict[str, t.Any]:
+    ctx = require_auth()
+    if not ctx.get("is_admin"):
+        abort(make_response(jsonify({"ok": False, "error": "admin"}), 403))
+    return ctx
+
+
+def require_mutation(ctx: dict[str, t.Any]) -> None:
+    if ctx.get("kind") == "session":
+        with db() as conn:
+            r = conn.execute("SELECT csrf_token FROM sessions WHERE id = ?", (ctx["session_id"],)).fetchone()
+            if not r:
+                abort(make_response(jsonify({"ok": False, "error": "auth"}), 401))
+            sess = {"csrf_token": r["csrf_token"]}
+        require_csrf(sess)
+
+
+def api_ok(data: t.Any = None, **extra) -> Response:
+    body = {"ok": True, "data": data}
+    body.update(extra)
+    return jsonify(body)
+
+
+def api_err(code: str, status: int = 400, **extra) -> Response:
+    body = {"ok": False, "error": code}
+    body.update(extra)
+    return make_response(jsonify(body), status)
+
+
+def parse_json(required: bool = True) -> dict[str, t.Any]:
+    if not request.data:
+        if required:
+            abort(make_response(jsonify({"ok": False, "error": "json_required"}), 400))
+        return {}
+    try:
+        j = request.get_json(force=True, silent=False)
+        if not isinstance(j, dict):
+            abort(make_response(jsonify({"ok": False, "error": "json_object_required"}), 400))
+        return t.cast(dict[str, t.Any], j)
+    except Exception:
