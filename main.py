@@ -537,3 +537,52 @@ def parse_json(required: bool = True) -> dict[str, t.Any]:
             abort(make_response(jsonify({"ok": False, "error": "json_object_required"}), 400))
         return t.cast(dict[str, t.Any], j)
     except Exception:
+        abort(make_response(jsonify({"ok": False, "error": "json_parse"}), 400))
+
+
+def get_meta(k: str) -> str | None:
+    with db() as conn:
+        r = conn.execute("SELECT v FROM meta WHERE k = ?", (k,)).fetchone()
+        return str(r["v"]) if r else None
+
+
+def set_meta(k: str, v: str) -> None:
+    with db() as conn:
+        conn.execute("INSERT INTO meta(k, v) VALUES(?, ?) ON CONFLICT(k) DO UPDATE SET v = excluded.v", (k, v))
+
+
+def seed_admin_if_needed() -> None:
+    # If no users exist, create a randomized admin user with printed credentials.
+    with db() as conn:
+        r = conn.execute("SELECT COUNT(*) AS n FROM users").fetchone()
+        if r and int(r["n"]) > 0:
+            return
+        email = os.environ.get("JAJA_BOOTSTRAP_EMAIL", "admin@jaja.local")
+        password = os.environ.get("JAJA_BOOTSTRAP_PASSWORD") or b64url(secrets.token_bytes(12))
+        salt = b64url(secrets.token_bytes(16))
+        ph = pbkdf2_hash(password, salt)
+        user_id = random_public_id("usr")
+        conn.execute(
+            "INSERT INTO users(id, email, password_hash, salt, is_admin, created_at) VALUES(?,?,?,?,?,?)",
+            (user_id, email, ph, salt, 1, utc_ts()),
+        )
+        # Create a default portfolio.
+        pid = random_public_id("pf")
+        conn.execute(
+            "INSERT INTO portfolios(id, user_id, label, base_currency, created_at) VALUES(?,?,?,?,?)",
+            (pid, user_id, "Primary", "USD", utc_ts()),
+        )
+        set_meta("bootstrap_email", email)
+        set_meta("bootstrap_password", password)
+
+
+def seed_demo_vault_if_needed() -> None:
+    with db() as conn:
+        r = conn.execute("SELECT COUNT(*) AS n FROM vaults").fetchone()
+        if r and int(r["n"]) > 0:
+            return
+        vid = random_public_id("vlt")
+        conn.execute(
+            "INSERT INTO vaults(id, name, chain, asset_symbol, asset_decimals, address, created_at, status, deposit_cap, mgmt_fee_bps_per_year, perf_fee_bps) "
+            "VALUES(?,?,?,?,?,?,?,?,?,?,?)",
+            (
