@@ -439,3 +439,52 @@ def session_destroy(session_id: str) -> None:
 def require_csrf(sess: dict[str, t.Any]) -> None:
     if request.method in ("POST", "PUT", "PATCH", "DELETE"):
         got = request.headers.get(CSRF_HEADER, "")
+        if not got or not hmac.compare_digest(got, str(sess["csrf_token"])):
+            abort(make_response(jsonify({"ok": False, "error": "csrf"}), 403))
+
+
+def api_key_hash(key: str) -> str:
+    return sha256_hex(("jaja:" + key).encode("utf-8"))
+
+
+def api_key_validate(key: str) -> dict[str, t.Any] | None:
+    h = api_key_hash(key)
+    with db() as conn:
+        r = conn.execute(
+            "SELECT api_keys.*, users.email, users.is_admin FROM api_keys JOIN users ON users.id = api_keys.user_id "
+            "WHERE api_keys.key_hash = ? AND api_keys.revoked_at IS NULL",
+            (h,),
+        ).fetchone()
+        if not r:
+            return None
+        conn.execute("UPDATE api_keys SET last_used_at = ? WHERE id = ?", (utc_ts(), r["id"]))
+        return row_to_dict(r)
+
+
+def auth_context() -> dict[str, t.Any] | None:
+    # Priority: API key (for programmatic use) then browser session.
+    api_key = request.headers.get(API_KEY_HEADER)
+    if api_key:
+        ak = api_key_validate(api_key)
+        if ak:
+            return {"kind": "api_key", "user_id": ak["user_id"], "email": ak["email"], "is_admin": bool(ak["is_admin"])}
+        return None
+    sid = get_cookie(SESSION_COOKIE)
+    if not sid:
+        return None
+    sess = session_load(sid)
+    if not sess:
+        return None
+    session_touch(sid)
+    with db() as conn:
+        u = conn.execute("SELECT id, email, is_admin FROM users WHERE id = ?", (sess["user_id"],)).fetchone()
+        if not u:
+            return None
+        return {
+            "kind": "session",
+            "session_id": sid,
+            "csrf": sess["csrf_token"],
+            "user_id": u["id"],
+            "email": u["email"],
+            "is_admin": bool(u["is_admin"]),
+        }
