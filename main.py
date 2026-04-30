@@ -390,3 +390,52 @@ def set_cookie(resp: Response, name: str, value: str, ttl: int) -> None:
 
 
 def clear_cookie(resp: Response, name: str) -> None:
+    resp.set_cookie(name, "", expires=0, httponly=True, samesite="Lax", path="/")
+
+
+def session_load(session_id: str) -> dict[str, t.Any] | None:
+    with db() as conn:
+        r = conn.execute("SELECT * FROM sessions WHERE id = ?", (session_id,)).fetchone()
+        if not r:
+            return None
+        if int(r["expires_at"]) <= utc_ts():
+            conn.execute("DELETE FROM sessions WHERE id = ?", (session_id,))
+            return None
+        return row_to_dict(r)
+
+
+def session_touch(session_id: str) -> None:
+    with db() as conn:
+        conn.execute("UPDATE sessions SET last_seen_at = ? WHERE id = ?", (utc_ts(), session_id))
+
+
+def session_create(user_id: str) -> dict[str, str]:
+    sid = random_public_id("sess")
+    csrf = b64url(secrets.token_bytes(18))
+    created = utc_ts()
+    exp = created + SESSION_TTL_SECONDS
+    with db() as conn:
+        conn.execute(
+            "INSERT INTO sessions(id, user_id, csrf_token, created_at, expires_at, last_seen_at, user_agent, ip) VALUES(?,?,?,?,?,?,?,?)",
+            (
+                sid,
+                user_id,
+                csrf,
+                created,
+                exp,
+                created,
+                request.headers.get("User-Agent"),
+                request.remote_addr,
+            ),
+        )
+    return {"session_id": sid, "csrf": csrf}
+
+
+def session_destroy(session_id: str) -> None:
+    with db() as conn:
+        conn.execute("DELETE FROM sessions WHERE id = ?", (session_id,))
+
+
+def require_csrf(sess: dict[str, t.Any]) -> None:
+    if request.method in ("POST", "PUT", "PATCH", "DELETE"):
+        got = request.headers.get(CSRF_HEADER, "")
