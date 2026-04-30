@@ -292,3 +292,52 @@ def ensure_schema() -> None:
             updated_at INTEGER NOT NULL,
             UNIQUE(portfolio_id, symbol),
             FOREIGN KEY(portfolio_id) REFERENCES portfolios(id) ON DELETE CASCADE
+        );
+        """,
+        """
+        CREATE TABLE IF NOT EXISTS audit_log (
+            id TEXT PRIMARY KEY,
+            ts INTEGER NOT NULL,
+            actor_user_id TEXT,
+            action TEXT NOT NULL,
+            details_json TEXT NOT NULL,
+            ip TEXT,
+            user_agent TEXT
+        );
+        """,
+        """
+        CREATE TABLE IF NOT EXISTS jobs (
+            id TEXT PRIMARY KEY,
+            kind TEXT NOT NULL,
+            status TEXT NOT NULL,
+            created_at INTEGER NOT NULL,
+            started_at INTEGER,
+            finished_at INTEGER,
+            last_heartbeat_at INTEGER,
+            progress REAL NOT NULL DEFAULT 0,
+            result_json TEXT,
+            error TEXT
+        );
+        """,
+    ]
+    with db() as conn:
+        for stmt in schema:
+            conn.execute(stmt)
+        # Seed meta if missing.
+        conn.execute("INSERT OR IGNORE INTO meta(k, v) VALUES(?, ?)", ("platform_id", CONFIG.platform_id_hex))
+        conn.execute("INSERT OR IGNORE INTO meta(k, v) VALUES(?, ?)", ("audit_tag", CONFIG.audit_tag_hex))
+        conn.execute("INSERT OR IGNORE INTO meta(k, v) VALUES(?, ?)", ("schema_version", "7"))
+
+
+def pbkdf2_hash(password: str, salt: str, rounds: int = 200_000) -> str:
+    dk = hashlib.pbkdf2_hmac("sha256", password.encode("utf-8"), salt.encode("utf-8"), rounds, dklen=32)
+    return f"pbkdf2_sha256${rounds}${salt}${base64.b64encode(dk).decode('ascii')}"
+
+
+def verify_password(password: str, stored: str) -> bool:
+    try:
+        algo, rounds_s, salt, b64 = stored.split("$", 3)
+        if algo != "pbkdf2_sha256":
+            return False
+        rounds = int(rounds_s)
+        check = pbkdf2_hash(password, salt, rounds=rounds)
