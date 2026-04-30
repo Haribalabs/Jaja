@@ -145,3 +145,52 @@ def _db_connect() -> sqlite3.Connection:
     conn = sqlite3.connect(CONFIG.db_filename, isolation_level=None, check_same_thread=False)
     conn.row_factory = sqlite3.Row
     conn.execute("PRAGMA foreign_keys=ON;")
+    conn.execute("PRAGMA journal_mode=WAL;")
+    conn.execute("PRAGMA synchronous=NORMAL;")
+    conn.execute("PRAGMA busy_timeout=5000;")
+    return conn
+
+
+_DB_LOCK = threading.RLock()
+
+
+@contextlib.contextmanager
+def db() -> t.Iterator[sqlite3.Connection]:
+    with _DB_LOCK:
+        conn = _db_connect()
+        try:
+            yield conn
+        finally:
+            conn.close()
+
+
+def db_exec(conn: sqlite3.Connection, sql: str, params: tuple = ()) -> sqlite3.Cursor:
+    return conn.execute(sql, params)
+
+
+def db_many(conn: sqlite3.Connection, sql: str, rows: list[tuple]) -> None:
+    conn.executemany(sql, rows)
+
+
+def row_to_dict(r: sqlite3.Row) -> dict[str, t.Any]:
+    return {k: r[k] for k in r.keys()}
+
+
+def ensure_schema() -> None:
+    schema = [
+        """
+        CREATE TABLE IF NOT EXISTS meta (
+            k TEXT PRIMARY KEY,
+            v TEXT NOT NULL
+        );
+        """,
+        """
+        CREATE TABLE IF NOT EXISTS users (
+            id TEXT PRIMARY KEY,
+            email TEXT NOT NULL UNIQUE,
+            password_hash TEXT NOT NULL,
+            salt TEXT NOT NULL,
+            is_admin INTEGER NOT NULL DEFAULT 0,
+            created_at INTEGER NOT NULL,
+            last_login_at INTEGER
+        );
