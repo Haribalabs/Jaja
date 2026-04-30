@@ -194,3 +194,52 @@ def ensure_schema() -> None:
             created_at INTEGER NOT NULL,
             last_login_at INTEGER
         );
+        """,
+        """
+        CREATE TABLE IF NOT EXISTS sessions (
+            id TEXT PRIMARY KEY,
+            user_id TEXT NOT NULL,
+            csrf_token TEXT NOT NULL,
+            created_at INTEGER NOT NULL,
+            expires_at INTEGER NOT NULL,
+            last_seen_at INTEGER NOT NULL,
+            user_agent TEXT,
+            ip TEXT,
+            FOREIGN KEY(user_id) REFERENCES users(id) ON DELETE CASCADE
+        );
+        """,
+        """
+        CREATE TABLE IF NOT EXISTS api_keys (
+            id TEXT PRIMARY KEY,
+            user_id TEXT NOT NULL,
+            label TEXT NOT NULL,
+            key_hash TEXT NOT NULL,
+            created_at INTEGER NOT NULL,
+            revoked_at INTEGER,
+            last_used_at INTEGER,
+            FOREIGN KEY(user_id) REFERENCES users(id) ON DELETE CASCADE
+        );
+        """,
+        """
+        CREATE TABLE IF NOT EXISTS vaults (
+            id TEXT PRIMARY KEY,
+            name TEXT NOT NULL,
+            chain TEXT NOT NULL,
+            asset_symbol TEXT NOT NULL,
+            asset_decimals INTEGER NOT NULL,
+            address TEXT,
+            created_at INTEGER NOT NULL,
+            status TEXT NOT NULL,
+            deposit_cap REAL NOT NULL,
+            mgmt_fee_bps_per_year INTEGER NOT NULL,
+            perf_fee_bps INTEGER NOT NULL
+        );
+        """,
+        """
+        CREATE TABLE IF NOT EXISTS strategies (
+            id TEXT PRIMARY KEY,
+            vault_id TEXT NOT NULL,
+            name TEXT NOT NULL,
+            kind TEXT NOT NULL,
+            risk_grade TEXT NOT NULL,
+            target_weight REAL NOT NULL,
