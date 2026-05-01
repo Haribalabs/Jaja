@@ -1272,3 +1272,52 @@ def api_backtest_start():
     j = parse_json(required=False)
     symbol = str(j.get("symbol") or "ETH").strip().upper()
     strategy = str(j.get("strategy") or "momentum").strip()
+    days = int(j.get("days") or 120)
+    step_min = int(j.get("step_min") or 60)
+    fee_bps = float(j.get("fee_bps") or 6.0)
+    slippage_bps = float(j.get("slippage_bps") or 9.0)
+    if days <= 5 or days > 2000:
+        return api_err("days_range", 400)
+    if step_min < 5 or step_min > 1440:
+        return api_err("step_range", 400)
+
+    end_ts = utc_ts()
+    start_ts = end_ts - days * 86400
+    start_ts = start_ts - (start_ts % (step_min * 60))
+    end_ts = end_ts - (end_ts % (step_min * 60))
+    p = BacktestParams(
+        symbol=symbol,
+        start_ts=start_ts,
+        end_ts=end_ts,
+        step_sec=step_min * 60,
+        fee_bps=fee_bps,
+        slippage_bps=slippage_bps,
+        strategy=strategy,
+    )
+
+    jid = job_create("backtest")
+    audit("job_create", ctx["user_id"], {"job_id": jid, "kind": "backtest", "symbol": symbol, "strategy": strategy})
+
+    def _run():
+        job_update(jid, status="running", started_at=utc_ts(), last_heartbeat_at=utc_ts(), progress=0.05)
+        try:
+            res = backtest_run(p)
+            job_update(
+                jid,
+                status="done" if res.get("ok") else "error",
+                finished_at=utc_ts(),
+                progress=1.0,
+                result_json=json_dumps(res),
+                error=None if res.get("ok") else res.get("error"),
+            )
+        except Exception as e:
+            job_update(jid, status="error", finished_at=utc_ts(), progress=1.0, error=str(e))
+
+    threading.Thread(target=_run, name=f"jaja-job-{jid}", daemon=True).start()
+    return api_ok({"job_id": jid})
+
+
+@app.get("/api/price/<symbol>")
+def api_price(symbol: str):
+    require_auth()
+    symbol = symbol.upper()
