@@ -1370,3 +1370,52 @@ def api_portfolio_position_upsert():
     symbol = str(j.get("symbol") or "").upper()
     qty = float(j.get("qty") or 0.0)
     cost = float(j.get("cost_basis") or 0.0)
+    if not portfolio_id or not symbol:
+        return api_err("bad_input", 400)
+    with db() as conn:
+        pf = conn.execute("SELECT * FROM portfolios WHERE id = ? AND user_id = ?", (portfolio_id, ctx["user_id"])).fetchone()
+        if not pf:
+            return api_err("not_found", 404)
+        pid = random_public_id("pos")
+        conn.execute(
+            "INSERT INTO portfolio_positions(id, portfolio_id, symbol, qty, cost_basis, updated_at) VALUES(?,?,?,?,?,?) "
+            "ON CONFLICT(portfolio_id, symbol) DO UPDATE SET qty=excluded.qty, cost_basis=excluded.cost_basis, updated_at=excluded.updated_at",
+            (pid, portfolio_id, symbol, qty, cost, utc_ts()),
+        )
+    audit("portfolio_position_upsert", ctx["user_id"], {"portfolio_id": portfolio_id, "symbol": symbol, "qty": qty})
+    return api_ok({"portfolio_id": portfolio_id, "symbol": symbol, "qty": qty, "cost_basis": cost})
+
+
+@app.get("/api/portfolio/<portfolio_id>")
+def api_portfolio(portfolio_id: str):
+    ctx = require_auth()
+    with db() as conn:
+        pf = conn.execute("SELECT * FROM portfolios WHERE id = ? AND user_id = ?", (portfolio_id, ctx["user_id"])).fetchone()
+        if not pf:
+            return api_err("not_found", 404)
+        pos = conn.execute("SELECT * FROM portfolio_positions WHERE portfolio_id = ? ORDER BY symbol ASC", (portfolio_id,)).fetchall()
+    positions = [row_to_dict(r) for r in pos]
+    # Mark-to-market using sim prices
+    mtm = 0.0
+    for p in positions:
+        px = MARKET.px_at(p["symbol"], utc_ts())
+        p["px"] = float(px)
+        p["value"] = float(px * float(p["qty"]))
+        mtm += p["value"]
+    return api_ok({"portfolio": row_to_dict(pf), "positions": positions, "mtm_value": float(mtm)})
+
+
+# -----------------------------
+# Static serving for WasuXir
+# -----------------------------
+
+
+@app.get("/wasuxir")
+def page_wasuxir():
+    # Convenience: redirect to the standalone interface folder if served by something else.
+    # If you run only this app, it can serve the local WasuXir index directly.
+    root = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "WasuXir"))
+    if os.path.exists(os.path.join(root, "index.html")):
+        return send_from_directory(root, "index.html")
+    return render_page(
+        "Jaja — WasuXir",
