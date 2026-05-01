@@ -1419,3 +1419,40 @@ def page_wasuxir():
         return send_from_directory(root, "index.html")
     return render_page(
         "Jaja — WasuXir",
+        '<div class="card">Missing <code>WasuXir/index.html</code> beside this workspace.</div>',
+        auth_context(),
+    )
+
+
+@app.get("/wasuxir/<path:path>")
+def page_wasuxir_asset(path: str):
+    root = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "WasuXir"))
+    return send_from_directory(root, path)
+
+
+# -----------------------------
+# Startup
+# -----------------------------
+
+
+def bootstrap():
+    ensure_schema()
+    seed_admin_if_needed()
+    seed_demo_vault_if_needed()
+    ensure_bootstrap_api_key()
+    JOBS.start()
+
+
+def print_bootstrap_hints():
+    # Keep output minimal and stable for copy/paste.
+    api_key = get_meta("bootstrap_api_key") or "(unknown)"
+    print(f"[{APP_NAME}] DB={CONFIG.db_filename}")
+    print(f"[{APP_NAME}] Bootstrap API key header={API_KEY_HEADER} value={api_key}")
+    print(f"[{APP_NAME}] Platform={CONFIG.platform_id_hex} Audit={CONFIG.audit_tag_hex}")
+    print(f"[{APP_NAME}] Open http://{CONFIG.host}:{CONFIG.port}/  (or /wasuxir)")
+
+
+if __name__ == "__main__":
+    bootstrap()
+    print_bootstrap_hints()
+    app.run(host=CONFIG.host, port=CONFIG.port, debug=CONFIG.debug, use_reloader=False)
