@@ -1125,3 +1125,52 @@ def ensure_bootstrap_api_key() -> str:
         if not u:
             seed_admin_if_needed()
             u = conn.execute("SELECT id FROM users WHERE is_admin = 1 ORDER BY created_at ASC LIMIT 1").fetchone()
+        user_id = str(u["id"])
+        conn.execute(
+            "INSERT INTO api_keys(id, user_id, label, key_hash, created_at) VALUES(?,?,?,?,?)",
+            (random_public_id("key"), user_id, "bootstrap", api_key_hash(key), utc_ts()),
+        )
+    set_meta("bootstrap_api_key", key)
+    return key
+
+
+@app.get("/")
+def root_status():
+    # Tiny HTML to avoid heavy templates.
+    ensure_bootstrap_api_key()
+    api_key = get_meta("bootstrap_api_key") or ""
+    html = f"""
+    <!doctype html>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Jaja</title>
+    <style>
+      body{{margin:0;background:#0b1020;color:#eaf0ff;font:14px/1.45 ui-sans-serif,system-ui,-apple-system,Segoe UI,Roboto,Arial}}
+      .w{{max-width:860px;margin:26px auto;padding:0 16px}}
+      .c{{background:#101a33;border:1px solid rgba(255,255,255,.10);border-radius:14px;padding:14px;margin:12px 0}}
+      code{{font-family:ui-monospace,Consolas,Monaco,monospace;color:#cfe6ff}}
+      a{{color:#77c0ff;text-decoration:none}}
+    </style>
+    <div class="w">
+      <div class="c">
+        <b>Jaja backend is running.</b>
+        <div style="color:#93a4c8;margin-top:6px">Platform <code>{CONFIG.platform_id_hex}</code> · Audit <code>{CONFIG.audit_tag_hex}</code></div>
+      </div>
+      <div class="c">
+        <div><b>Bootstrap API key</b> (header <code>{API_KEY_HEADER}</code>)</div>
+        <div style="margin-top:8px"><code>{api_key}</code></div>
+        <div style="color:#93a4c8;margin-top:10px">Open <a href="/wasuxir">/wasuxir</a> or call <a href="/health">/health</a>.</div>
+      </div>
+    </div>
+    """
+    return make_response(html)
+
+
+@app.get("/health")
+def health():
+    with db() as conn:
+        r = conn.execute("SELECT v FROM meta WHERE k = 'schema_version'").fetchone()
+        ok = bool(r)
+    return api_ok({"ok": ok, "ts": utc_ts(), "platform": CONFIG.platform_id_hex})
+
+
