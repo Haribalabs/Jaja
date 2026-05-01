@@ -1027,3 +1027,52 @@ class JobRunner:
         self._stop.set()
         for t_ in self._threads:
             t_.join(timeout=1.5)
+
+    def _price_pump_loop(self):
+        # Keep a rolling price series for key symbols.
+        symbols = ["USDC", "ETH", "BTC", "SOL", "ARB", "OP"]
+        while not self._stop.is_set():
+            try:
+                ts = utc_ts()
+                # Snap to 5-minute grid for reproducibility.
+                ts = ts - (ts % 300)
+                for sym in symbols:
+                    px = MARKET.px_at(sym, ts)
+                    price_upsert(sym, ts, px, "sim")
+            except Exception:
+                pass
+            self._stop.wait(25.0)
+
+    def _signal_loop(self):
+        while not self._stop.is_set():
+            try:
+                with db() as conn:
+                    vaults = conn.execute("SELECT * FROM vaults ORDER BY created_at ASC").fetchall()
+                for v in vaults:
+                    vdict = row_to_dict(v)
+                    for horizon in ("1d", "7d", "30d"):
+                        s = signal_for_vault(vdict, horizon)
+                        sid = random_public_id("sig")
+                        with db() as conn:
+                            conn.execute(
+                                "INSERT INTO signals(id, vault_id, ts, horizon, score, rationale, payload_json) VALUES(?,?,?,?,?,?,?)",
+                                (
+                                    sid,
+                                    vdict["id"],
+                                    utc_ts(),
+                                    horizon,
+                                    float(s["score"]),
+                                    str(s["rationale"]),
+                                    json_dumps(s["payload"]),
+                                ),
+                            )
+            except Exception:
+                pass
+            self._stop.wait(90.0)
+
+
+JOBS = JobRunner()
+
+
+def job_create(kind: str) -> str:
+    jid = random_public_id("job")
