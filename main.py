@@ -978,3 +978,52 @@ def backtest_run(p: BacktestParams) -> dict[str, t.Any]:
 
         equity_curve.append({"ts": pt.ts, "equity": equity(px), "px": px, "ma_fast": ma_fast, "ma_slow": ma_slow})
         last_px = px
+
+    eq0 = equity_curve[0]["equity"]
+    eqN = equity_curve[-1]["equity"]
+    ret = (eqN / eq0) - 1.0 if eq0 else 0.0
+    # Drawdown
+    peak = -1e18
+    max_dd = 0.0
+    for x in equity_curve:
+        e = float(x["equity"])
+        if e > peak:
+            peak = e
+        dd = (peak - e) / peak if peak > 0 else 0.0
+        max_dd = max(max_dd, dd)
+
+    return {
+        "ok": True,
+        "params": dataclasses.asdict(p),
+        "summary": {
+            "equity_start": float(eq0),
+            "equity_end": float(eqN),
+            "return": float(ret),
+            "max_drawdown": float(max_dd),
+            "trades": int(len(trades)),
+        },
+        "equity_curve": equity_curve,
+        "trades": trades[:2000],
+    }
+
+
+# -----------------------------
+# Background jobs
+# -----------------------------
+
+class JobRunner:
+    def __init__(self):
+        self._stop = threading.Event()
+        self._threads: list[threading.Thread] = []
+
+    def start(self):
+        t1 = threading.Thread(target=self._price_pump_loop, name="jaja-price-pump", daemon=True)
+        t2 = threading.Thread(target=self._signal_loop, name="jaja-signal", daemon=True)
+        self._threads = [t1, t2]
+        for t_ in self._threads:
+            t_.start()
+
+    def stop(self):
+        self._stop.set()
+        for t_ in self._threads:
+            t_.join(timeout=1.5)
