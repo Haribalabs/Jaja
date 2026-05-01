@@ -1076,3 +1076,52 @@ JOBS = JobRunner()
 
 def job_create(kind: str) -> str:
     jid = random_public_id("job")
+    with db() as conn:
+        conn.execute(
+            "INSERT INTO jobs(id, kind, status, created_at, progress) VALUES(?,?,?,?,?)",
+            (jid, kind, "queued", utc_ts(), 0.0),
+        )
+    return jid
+
+
+def job_update(jid: str, **fields: t.Any) -> None:
+    allowed = {"status", "started_at", "finished_at", "last_heartbeat_at", "progress", "result_json", "error"}
+    sets = []
+    params = []
+    for k, v in fields.items():
+        if k not in allowed:
+            continue
+        sets.append(f"{k} = ?")
+        params.append(v)
+    if not sets:
+        return
+    params.append(jid)
+    with db() as conn:
+        conn.execute(f"UPDATE jobs SET {', '.join(sets)} WHERE id = ?", tuple(params))
+
+
+def job_get(jid: str) -> dict[str, t.Any] | None:
+    with db() as conn:
+        r = conn.execute("SELECT * FROM jobs WHERE id = ?", (jid,)).fetchone()
+        return row_to_dict(r) if r else None
+
+
+# -----------------------------
+# Minimal bootstrap + tiny status page
+# -----------------------------
+
+def ensure_bootstrap_api_key() -> str:
+    """
+    Create a bootstrap API key if none exist.
+    Stored in meta as plaintext ONCE for convenience; API auth uses hash in db.
+    """
+    existing = get_meta("bootstrap_api_key")
+    if existing:
+        return existing
+    key = os.environ.get("JAJA_BOOTSTRAP_API_KEY") or b64url(secrets.token_bytes(30))
+    # Tie it to the first admin user.
+    with db() as conn:
+        u = conn.execute("SELECT id FROM users WHERE is_admin = 1 ORDER BY created_at ASC LIMIT 1").fetchone()
+        if not u:
+            seed_admin_if_needed()
+            u = conn.execute("SELECT id FROM users WHERE is_admin = 1 ORDER BY created_at ASC LIMIT 1").fetchone()
