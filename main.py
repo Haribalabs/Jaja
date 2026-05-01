@@ -1174,3 +1174,52 @@ def health():
     return api_ok({"ok": ok, "ts": utc_ts(), "platform": CONFIG.platform_id_hex})
 
 
+# -----------------------------
+# Routes: JSON API
+# -----------------------------
+
+
+@app.get("/api/me")
+def api_me():
+    ctx = require_auth()
+    out = {k: ctx[k] for k in ("user_id", "email", "is_admin", "kind") if k in ctx}
+    if ctx.get("kind") == "session":
+        out["csrf"] = ctx.get("csrf")
+    return api_ok(out)
+
+
+@app.get("/api/vaults")
+def api_vaults():
+    require_auth()
+    with db() as conn:
+        rows = conn.execute("SELECT * FROM vaults ORDER BY created_at DESC").fetchall()
+    return api_ok([row_to_dict(r) for r in rows])
+
+
+@app.get("/api/vault/<vault_id>")
+def api_vault(vault_id: str):
+    require_auth()
+    v = vault_get(vault_id)
+    if not v:
+        return api_err("not_found", 404)
+    strats = vault_strategies(vault_id)
+    return api_ok(
+        {
+            "vault": v,
+            "strategies": [dataclasses.asdict(s) for s in strats],
+            "weights": normalize_weights(strats),
+        }
+    )
+
+
+@app.post("/api/vault/<vault_id>/allocation")
+def api_allocation(vault_id: str):
+    ctx = require_auth()
+    require_mutation(ctx)
+    v = vault_get(vault_id)
+    if not v:
+        return api_err("not_found", 404)
+    j = parse_json(required=False)
+    horizon = str(j.get("horizon") or "30d")
+    if horizon not in ("1d", "7d", "30d"):
+        return api_err("bad_horizon", 400)
