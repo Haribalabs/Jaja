@@ -1321,3 +1321,52 @@ def api_backtest_start():
 def api_price(symbol: str):
     require_auth()
     symbol = symbol.upper()
+    p = price_latest(symbol)
+    if not p:
+        ts = utc_ts()
+        ts = ts - (ts % 300)
+        px = MARKET.px_at(symbol, ts)
+        price_upsert(symbol, ts, px, "sim")
+        p = price_latest(symbol)
+    return api_ok(dataclasses.asdict(p) if p else None)
+
+
+@app.get("/api/price/<symbol>/series")
+def api_price_series(symbol: str):
+    require_auth()
+    symbol = symbol.upper()
+    end_ts = int(request.args.get("end_ts") or utc_ts())
+    days = int(request.args.get("days") or 30)
+    step = int(request.args.get("step_sec") or 3600)
+    days = int(clamp(days, 1, 3650))
+    step = int(clamp(step, 60, 86400))
+    start_ts = end_ts - days * 86400
+    start_ts = start_ts - (start_ts % step)
+    end_ts = end_ts - (end_ts % step)
+    pts = price_series(symbol, start_ts, end_ts, step)
+    return api_ok([dataclasses.asdict(p) for p in pts])
+
+
+@app.get("/api/job/<job_id>")
+def api_job(job_id: str):
+    require_auth()
+    j = job_get(job_id)
+    if not j:
+        return api_err("not_found", 404)
+    if j.get("result_json"):
+        try:
+            j["result"] = json.loads(str(j["result_json"]))
+        except Exception:
+            j["result"] = None
+    return api_ok(j)
+
+
+@app.post("/api/portfolio/position")
+def api_portfolio_position_upsert():
+    ctx = require_auth()
+    require_mutation(ctx)
+    j = parse_json()
+    portfolio_id = str(j.get("portfolio_id") or "")
+    symbol = str(j.get("symbol") or "").upper()
+    qty = float(j.get("qty") or 0.0)
+    cost = float(j.get("cost_basis") or 0.0)
